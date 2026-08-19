@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+**/build
+.cxx
+.externalNativeBuild
+local.properties
+*.apk
+*.aar
+/captures
+
+# Legacy standalone repositories kept locally during migration
+/NewLandHCUHF/
+/NewlandN1/

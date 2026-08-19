@@ -1,0 +1,1 @@
+-keep class com.newland.plugins.template.** { *; }

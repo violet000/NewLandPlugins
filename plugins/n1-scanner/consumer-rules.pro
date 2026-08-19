@@ -1,0 +1,4 @@
+-keep class com.hc.so.** { *; }
+-keep class com.nlscan.nlsdk.** { *; }
+-keep class com.aill.androidserialport.** { *; }
+-keep class com.hc.n1scanner.** { *; }

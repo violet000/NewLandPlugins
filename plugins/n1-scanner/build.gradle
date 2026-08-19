@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.hc.n1scanner'
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api project(':newland-core')
+    api project(':plugins:nlsdk')
+    api project(':plugins:hc-power')
+}

@@ -1,0 +1,24 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.newland.plugins.hcpower'
+    defaultConfig {
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api files('libs/classes.jar')
+}

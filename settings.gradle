@@ -1,0 +1,37 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+rootProject.name = "NewLandPlugins"
+
+include ':newland-core'
+include ':newland-bom'
+include ':newland-all'
+
+// Auto-discover plugin modules: add/remove a folder under plugins/ (except _template)
+def pluginsDir = file('plugins')
+if (pluginsDir.exists()) {
+    pluginsDir.eachDir { dir ->
+        if (dir.name.startsWith('_') || dir.name.startsWith('.')) {
+            return
+        }
+        def groovy = new File(dir, 'build.gradle')
+        def kts = new File(dir, 'build.gradle.kts')
+        if (groovy.exists() || kts.exists()) {
+            include ":plugins:${dir.name}"
+        }
+    }
+}

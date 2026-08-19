@@ -1,0 +1,2 @@
+-keep class com.newland.plugins.core.** { *; }
+-keep interface com.newland.plugins.core.** { *; }

@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.library' version '8.2.2' apply false
+}
+
+ext {
+    compileSdk = 34
+    minSdk = 21
+    targetSdk = 34
+    newlandGroup = providers.gradleProperty('GROUP').get()
+    newlandVersion = providers.gradleProperty('VERSION_NAME').get()
+    newlandUrl = providers.gradleProperty('POM_URL').get()
+}
+
+subprojects { sub ->
+    group = rootProject.ext.newlandGroup
+    version = rootProject.ext.newlandVersion
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}
+
+/**
+ * Lists discovered plugin modules. Useful when adding/removing plugins.
+ */
+tasks.register('listPlugins') {
+    group = 'newland'
+    description = 'Print public and internal plugin modules'
+    doLast {
+        def plugins = rootProject.subprojects.findAll { it.path.startsWith(':plugins:') }
+        println 'NewLand plugins:'
+        plugins.sort { it.path }.each { p ->
+            def props = new Properties()
+            def file = new File(p.projectDir, 'gradle.properties')
+            if (file.exists()) {
+                file.withInputStream { props.load(it) }
+            }
+            def flag = props.getProperty('newland.public', 'false') == 'true' ? 'public' : 'internal'
+            println "  - ${p.path}  artifact=${p.name}  (${flag})"
+        }
+    }
+}

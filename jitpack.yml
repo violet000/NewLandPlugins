@@ -1,0 +1,8 @@
+jdk:
+  - openjdk17
+before_install:
+  - chmod +x gradlew
+  - yes | sdkmanager --licenses >/dev/null || true
+  - sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+install:
+  - ./gradlew publishToMavenLocal -x test -x lint -x extractReleaseAnnotations --stacktrace

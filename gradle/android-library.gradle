@@ -1,0 +1,63 @@
+android {
+    compileSdk rootProject.ext.compileSdk
+
+    defaultConfig {
+        minSdk rootProject.ext.minSdk
+        targetSdk rootProject.ext.targetSdk
+        if (file('consumer-rules.pro').exists()) {
+            consumerProguardFiles 'consumer-rules.pro'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (file('proguard-rules.pro').exists()) {
+                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            }
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    publishing {
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+afterEvaluate {
+    android.libraryVariants.all { variant ->
+        def cap = variant.name.capitalize()
+        def extract = tasks.findByName("extract${cap}Annotations")
+        if (extract != null) {
+            extract.enabled = false
+        }
+        def typedefFile = file("${buildDir}/intermediates/annotations_typedef_file/${variant.name}/typedefs.txt")
+        def ensure = tasks.register("ensure${cap}Typedefs") {
+            outputs.file(typedefFile)
+            doLast {
+                typedefFile.parentFile.mkdirs()
+                if (!typedefFile.exists()) {
+                    typedefFile.text = ''
+                }
+            }
+        }
+        def sync = tasks.findByName("sync${cap}LibJars")
+        if (sync != null) {
+            sync.dependsOn ensure
+        }
+    }
+}

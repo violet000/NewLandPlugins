@@ -1,0 +1,19 @@
+plugins {
+    id 'java-platform'
+}
+
+javaPlatform {
+    allowDependencies()
+}
+
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    constraints {
+        api project(':newland-core')
+        api project(':newland-all')
+        rootProject.subprojects
+                .findAll { it.path.startsWith(':plugins:') }
+                .each { api it }
+    }
+}
