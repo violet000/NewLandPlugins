@@ -10,21 +10,7 @@ apply from: rootProject.file('gradle/android-library.gradle')
 apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
-    api project(':newland-core')
     implementation 'androidx.annotation:annotation:1.7.1'
 }
 
-// Public plugins are picked up automatically via plugins/*/gradle.properties
-rootProject.subprojects
-        .findAll { it.path.startsWith(':plugins:') }
-        .each { pluginProject ->
-            def propsFile = new File(pluginProject.projectDir, 'gradle.properties')
-            if (!propsFile.exists()) {
-                return
-            }
-            def props = new Properties()
-            propsFile.withInputStream { props.load(it) }
-            if (props.getProperty('newland.public') == 'true') {
-                dependencies.add('api', pluginProject)
-            }
-        }
+apply from: rootProject.file('gradle/bundle-all.gradle')

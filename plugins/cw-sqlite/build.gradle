@@ -1,0 +1,19 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.newland.plugins.cwsqlite'
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api files('libs/sqlite-connector.jar')
+}

@@ -1,0 +1,3 @@
+-keep class com.zjft.plugin.** { *; }
+-keep class com.cw.fpfbbsdk.** { *; }
+-keep class cn.com.aratek.** { *; }

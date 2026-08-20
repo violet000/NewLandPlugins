@@ -10,17 +10,17 @@
 NewLandPlugins
 ├── newland-bom          # 版本对齐（BOM）
 ├── newland-core         # 插件 SPI + 清单发现
-├── newland-all          # 聚合所有「公开」插件
+├── newland-all          # 聚合 HC / Newland 公开插件
+├── zijin-all            # 聚合紫金 / Chainway 公开插件
 └── plugins/             # 自动发现：增删目录即可
-    ├── uhf              # 公开：UHF RFID
-    ├── n1-scanner       # 公开：N1 红外扫码
-    ├── hc-power         # 内部：HcPowerCtrl + libSerialPortHc
-    ├── nlsdk            # 内部：Newland 通信
-    └── serial-port      # 内部：UART JNI
+    ├── uhf / n1-scanner / hc-power / nlsdk / serial-port   # Newland HC
+    ├── usb-camera                                          # USB 摄像头人脸
+    ├── zijin-uhf / zijin-scan / zijin-fingerprint          # 紫金设备
+    └── cw-*                                                # 内部厂商 AAR/JAR
 ```
 
 `settings.gradle` 会扫描 `plugins/` 下除 `_` 开头以外、且含 `build.gradle` 的目录。  
-`newland-all` 只聚合 `gradle.properties` 中 `newland.public=true` 的模块。
+`newland-all` / `zijin-all` 分别聚合 `newland.bundle=newland`（默认）和 `newland.bundle=zijin` 的公开模块。 Cordova 原工程在 `cordova-plugins/`，仅作对照，不参与发布。
 
 ## 接入
 
@@ -40,7 +40,7 @@ dependencyResolutionManagement {
 
 ```gradle
 dependencies {
-    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.0.0')
+    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.0')
     implementation 'com.github.violet000.NewLandPlugins:uhf'
     implementation 'com.github.violet000.NewLandPlugins:n1-scanner'
 }
@@ -50,11 +50,22 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.0.0'
+    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.0'
+    // 紫金 / Chainway（原 Cordova 插件）：
+    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.0'
 }
 ```
 
-只使用某一个插件时不要依赖 `newland-all`，避免把用不到的 so / 厂商库打进 APK。
+只使用某一个插件时不要依赖 `*-all`，避免把用不到的 so / 厂商库打进 APK。
+
+紫金能力按需引入：
+
+```gradle
+implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.0'
+implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.0'
+implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.0'
+implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.0'
+```
 
 ## 用法
 
@@ -93,10 +104,47 @@ scanner.startScan();
 scanner.close();
 ```
 
+### 紫金 UHF / 扫码 / 指纹（原 Cordova）
+
+已去掉 Cordova 依赖，原生 Android 直接调。页面可见性变化时转发 `onResume` / `onPause`，退出时 `destroy()`。
+
+```java
+ResultCallback callback = new ResultCallback() {
+    @Override public void onSuccess(String data) { }
+    @Override public void onError(String message) { }
+};
+
+ZijinUhf uhf = new ZijinUhf(this);
+uhf.open(callback);
+uhf.startInventory(callback);
+
+ZijinScan scan = new ZijinScan(this);
+scan.scan(callback);
+
+ZijinFingerprint fp = new ZijinFingerprint(this);
+fp.open(callback);
+fp.scan(callback);
+```
+
+### USB 摄像头人脸
+
+人脸 Activity 来自 [violet000/USBCamera](https://github.com/violet000/USBCamera)（JitPack `1.0.0`），底层 UVC 为其传递依赖 [violet000/AndroidUVCCamera](https://github.com/violet000/AndroidUVCCamera)。
+
+```java
+UsbCamera camera = new UsbCamera();
+camera.startFaceVerifyByUsbCamera(this, size, baseUrl);
+
+@Override
+protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    camera.onActivityResult(this, requestCode, resultCode, data, callback);
+}
+```
+
 ## 添加插件
 
 1. 复制 `plugins/_template/` 为 `plugins/your-id/`（目录名不要以下划线开头）。
-2. 改 `gradle.properties`：`newland.artifact`、`newland.public`、说明文案。
+2. 改 `gradle.properties`：`newland.artifact`、`newland.public`、`newland.bundle`（`newland` 或 `zijin`）、说明文案。
 3. 实现 `HardwarePlugin`，并在 `AndroidManifest.xml` 声明：
 
 ```xml
@@ -111,7 +159,7 @@ scanner.close();
 5. 本地检查：`./gradlew listPlugins`，再 `./gradlew :plugins:your-id:assembleRelease`。
 6. 打 tag 后 JitPack 会发布 `com.github.violet000.NewLandPlugins:your-id:<tag>`。
 
-**不必**修改 `settings.gradle`。公开插件会自动进入 `newland-all` 与 BOM。
+**不必**修改 `settings.gradle`。公开插件会按 `newland.bundle` 自动进入 `newland-all` 或 `zijin-all`，并写入 BOM。
 
 ## 移除 / 下线插件
 
@@ -130,7 +178,7 @@ JitPack：把本目录作为 **新仓库** 推到 GitHub（建议仓库名 `NewL
 
 JitPack 多模块坐标为 `com.github.<user>.<repo>:<artifact>:<tag>`。根目录 `GROUP=com.github.violet000` 用于本地 `mavenLocal()`。
 
-原先独立的 `NewLandHCUHF/`、`NewlandN1/` 目录仅作迁移对照，已被 `.gitignore` 排除，不要再提交进新仓库。确认新工程无误后可自行删除。
+原先独立的 `NewLandHCUHF/`、`NewlandN1/`、`cordova-plugins/` 目录仅作迁移对照，已被 `.gitignore` 排除。
 
 ## 版本
 

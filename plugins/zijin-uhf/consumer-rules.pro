@@ -1,0 +1,2 @@
+-keep class com.zjft.plugin.** { *; }
+-keep class com.cw.r2000uhfsdk.** { *; }

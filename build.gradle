@@ -36,7 +36,8 @@ tasks.register('listPlugins') {
                 file.withInputStream { props.load(it) }
             }
             def flag = props.getProperty('newland.public', 'false') == 'true' ? 'public' : 'internal'
-            println "  - ${p.path}  artifact=${p.name}  (${flag})"
+            def bundle = props.getProperty('newland.bundle', 'newland')
+            println "  - ${p.path}  artifact=${p.name}  (${flag}, bundle=${bundle})"
         }
     }
 }

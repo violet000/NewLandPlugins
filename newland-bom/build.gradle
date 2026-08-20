@@ -12,6 +12,7 @@ dependencies {
     constraints {
         api project(':newland-core')
         api project(':newland-all')
+        api project(':zijin-all')
         rootProject.subprojects
                 .findAll { it.path.startsWith(':plugins:') }
                 .each { api it }

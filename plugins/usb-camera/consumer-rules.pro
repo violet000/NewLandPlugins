@@ -1,0 +1,2 @@
+-keep class com.zijin.plugin.usbcamera.** { *; }
+-keep class com.zijin.camera_lib.** { *; }

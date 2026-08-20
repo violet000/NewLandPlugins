@@ -1,0 +1,31 @@
+apply plugin: 'base'
+apply plugin: 'maven-publish'
+
+def vendorJar = file((findProperty('newland.vendorJar') ?: 'libs/sdk.jar').toString())
+if (!vendorJar.exists()) {
+    throw new GradleException("${project.path} vendor JAR not found: ${vendorJar}")
+}
+
+configurations.maybeCreate('default')
+artifacts.add('default', vendorJar)
+
+def artifactName = (findProperty('newland.artifact') ?: project.name).toString()
+def pomName = (findProperty('newland.displayName') ?: project.name).toString()
+def pomDescription = (findProperty('newland.description') ?: '').toString()
+
+publishing {
+    publications {
+        release(MavenPublication) {
+            groupId = rootProject.ext.newlandGroup
+            artifactId = artifactName
+            version = rootProject.ext.newlandVersion
+            artifact(vendorJar)
+            pom {
+                packaging = 'jar'
+                name = pomName
+                description = pomDescription
+                url = rootProject.ext.newlandUrl
+            }
+        }
+    }
+}

@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.newland.plugins.zijin'
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.7.1'
+}
+
+apply from: rootProject.file('gradle/bundle-all.gradle')

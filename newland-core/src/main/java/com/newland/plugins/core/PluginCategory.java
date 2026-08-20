@@ -5,5 +5,7 @@ public enum PluginCategory {
     BARCODE_SCANNER,
     POWER_CONTROL,
     SERIAL_PORT,
+    FINGERPRINT,
+    USB_CAMERA,
     OTHER
 }

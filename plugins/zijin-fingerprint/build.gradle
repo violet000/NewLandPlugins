@@ -1,0 +1,17 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.zjft.plugin.fingerprint'
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api project(':newland-core')
+    api project(':plugins:cw-fp-sdk')
+    api project(':plugins:cw-serialport')
+    api project(':plugins:cw-sqlite')
+}

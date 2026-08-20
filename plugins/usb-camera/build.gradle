@@ -1,0 +1,20 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.zijin.plugin.usbcamera'
+    packaging {
+        resources {
+            excludes += ['META-INF/NOTICE', 'META-INF/LICENSE']
+        }
+    }
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api project(':newland-core')
+    api 'com.github.violet000:USBCamera:1.0.0'
+}

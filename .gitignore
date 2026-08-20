@@ -10,8 +10,10 @@
 local.properties
 *.apk
 *.aar
+!**/libs/*.aar
 /captures
 
 # Legacy standalone repositories kept locally during migration
 /NewLandHCUHF/
 /NewlandN1/
+/cordova-plugins/

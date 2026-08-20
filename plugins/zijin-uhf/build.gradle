@@ -1,0 +1,17 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.zjft.plugin.uhf'
+}
+
+apply from: rootProject.file('gradle/android-library.gradle')
+apply from: rootProject.file('gradle/publish-module.gradle')
+
+dependencies {
+    api project(':newland-core')
+    api project(':plugins:cw-r2000')
+    api project(':plugins:cw-serialport')
+    implementation 'com.google.code.gson:gson:2.8.5'
+}

@@ -1,0 +1,23 @@
+def bundleName = (findProperty('newland.bundleFilter') ?: 'newland').toString()
+
+dependencies {
+    api project(':newland-core')
+}
+
+rootProject.subprojects
+        .findAll { it.path.startsWith(':plugins:') }
+        .each { pluginProject ->
+            def propsFile = new File(pluginProject.projectDir, 'gradle.properties')
+            if (!propsFile.exists()) {
+                return
+            }
+            def props = new Properties()
+            propsFile.withInputStream { props.load(it) }
+            if (props.getProperty('newland.public') != 'true') {
+                return
+            }
+            def bundle = props.getProperty('newland.bundle', 'newland')
+            if (bundle == bundleName) {
+                dependencies.add('api', pluginProject)
+            }
+        }

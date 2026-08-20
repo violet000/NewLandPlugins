@@ -20,6 +20,7 @@ rootProject.name = "NewLandPlugins"
 include ':newland-core'
 include ':newland-bom'
 include ':newland-all'
+include ':zijin-all'
 
 // Auto-discover plugin modules: add/remove a folder under plugins/ (except _template)
 def pluginsDir = file('plugins')
