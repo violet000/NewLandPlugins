@@ -16,5 +16,5 @@ apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
     api project(':newland-core')
-    api 'com.github.violet000:USBCamera:1.0.1'
+    api 'com.github.violet000:USBCamera:1.0.2'
 }

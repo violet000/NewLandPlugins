@@ -8,5 +8,17 @@
         <meta-data
             android:name="com.newland.plugin.usb-camera"
             android:value="com.newland.plugins.usbcamera.UsbCameraPlugin" />
+        <activity
+            android:name="com.zijin.camera_lib.CameraActivity"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
+        <activity
+            android:name="com.zijin.camera_lib.CameraUserInfoActivity"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
+        <activity
+            android:name="com.zijin.camera_lib.UsbFaceVerifyActivity"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
     </application>
 </manifest>
