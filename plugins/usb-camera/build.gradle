@@ -16,6 +16,6 @@ apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
     api project(':newland-core')
-    // 1.0.2：横屏前置裁剪越界修复
-    api 'com.github.violet000:USBCamera:1.0.2'
+    // 1.0.3：关闭页面时真正 release 系统相机
+    api 'com.github.violet000:USBCamera:1.0.3'
 }
