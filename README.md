@@ -40,7 +40,7 @@ dependencyResolutionManagement {
 
 ```gradle
 dependencies {
-    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.5')
+    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.6')
     implementation 'com.github.violet000.NewLandPlugins:uhf'
     implementation 'com.github.violet000.NewLandPlugins:n1-scanner'
 }
@@ -50,9 +50,9 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.5'
+    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.6'
     // 紫金 / Chainway（原 Cordova 插件）：
-    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.5'
+    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.6'
 }
 ```
 
@@ -61,10 +61,10 @@ dependencies {
 紫金能力按需引入：
 
 ```gradle
-implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.5'
-implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.5'
-implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.5'
-implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.5'
+implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.6'
+implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.6'
+implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.6'
+implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.6'
 ```
 
 ## 用法
@@ -128,7 +128,7 @@ fp.scan(callback);
 
 ### USB 摄像头人脸
 
-人脸 Activity 来自 [violet000/USBCamera](https://github.com/violet000/USBCamera)（JitPack `1.0.4`），底层 UVC 为其传递依赖 [violet000/AndroidUVCCamera](https://github.com/violet000/AndroidUVCCamera)。本机摄像头默认**前置**、**横屏**；关闭页面时会停预览并 `release` 系统相机。USB 外接走 `startFaceVerifyByUsbCamera`。
+人脸 Activity 来自 [violet000/USBCamera](https://github.com/violet000/USBCamera)（JitPack `1.0.5`），底层 UVC 为其传递依赖 [violet000/AndroidUVCCamera](https://github.com/violet000/AndroidUVCCamera)。本机摄像头默认**前置**、**横屏**；关闭页面时会停预览并 `release` 系统相机。USB 外接走 `startFaceVerifyByUsbCamera`。
 
 ```java
 UsbCamera camera = new UsbCamera();
