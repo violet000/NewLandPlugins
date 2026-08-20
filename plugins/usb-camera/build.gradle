@@ -16,6 +16,6 @@ apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
     api project(':newland-core')
-    // 1.0.3：关闭页面时真正 release 系统相机
-    api 'com.github.violet000:USBCamera:1.0.3'
+    // 1.0.4：人脸框向右偏移
+    api 'com.github.violet000:USBCamera:1.0.4'
 }
