@@ -3,6 +3,7 @@ package com.zijin.plugin.usbcamera;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.hardware.Camera;
 import android.os.Bundle;
 
 import com.newland.plugins.core.ResultCallback;
@@ -46,17 +47,27 @@ public class UsbCamera {
     }
 
     public void startGetUserInfoByCamera(Activity activity, String baseUrl, String authorization) {
+        startGetUserInfoByCamera(activity, baseUrl, authorization, Camera.CameraInfo.CAMERA_FACING_FRONT);
+    }
+
+    public void startGetUserInfoByCamera(Activity activity, String baseUrl, String authorization, int cameraFacing) {
         Intent intent = new Intent(activity, CameraUserInfoActivity.class);
         intent.putExtra("base_url", baseUrl);
         intent.putExtra("authorization", "Bearer " + authorization);
+        intent.putExtra(CameraActivity.EXTRA_CAMERA_FACING, cameraFacing);
         pendingDoWhat = 0;
         pendingRequestCode = CameraUserInfoActivity.REQ_START_CAMERA;
         activity.startActivityForResult(intent, pendingRequestCode);
     }
 
     public void startFaceVerifyByCamera(Activity activity, String baseUrl) {
+        startFaceVerifyByCamera(activity, baseUrl, Camera.CameraInfo.CAMERA_FACING_FRONT);
+    }
+
+    public void startFaceVerifyByCamera(Activity activity, String baseUrl, int cameraFacing) {
         Intent intent = new Intent(activity, CameraActivity.class);
         intent.putExtra("base_url", baseUrl);
+        intent.putExtra(CameraActivity.EXTRA_CAMERA_FACING, cameraFacing);
         pendingDoWhat = 0;
         pendingRequestCode = CameraActivity.REQ_START_CAMERA;
         activity.startActivityForResult(intent, pendingRequestCode);

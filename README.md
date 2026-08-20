@@ -40,7 +40,7 @@ dependencyResolutionManagement {
 
 ```gradle
 dependencies {
-    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.0')
+    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.1')
     implementation 'com.github.violet000.NewLandPlugins:uhf'
     implementation 'com.github.violet000.NewLandPlugins:n1-scanner'
 }
@@ -50,9 +50,9 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.0'
+    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.1'
     // 紫金 / Chainway（原 Cordova 插件）：
-    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.0'
+    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.1'
 }
 ```
 
@@ -61,10 +61,10 @@ dependencies {
 紫金能力按需引入：
 
 ```gradle
-implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.0'
-implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.0'
-implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.0'
-implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.0'
+implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.1'
+implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.1'
+implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.1'
+implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.1'
 ```
 
 ## 用法
@@ -128,11 +128,15 @@ fp.scan(callback);
 
 ### USB 摄像头人脸
 
-人脸 Activity 来自 [violet000/USBCamera](https://github.com/violet000/USBCamera)（JitPack `1.0.0`），底层 UVC 为其传递依赖 [violet000/AndroidUVCCamera](https://github.com/violet000/AndroidUVCCamera)。
+人脸 Activity 来自 [violet000/USBCamera](https://github.com/violet000/USBCamera)（JitPack `1.0.1`），底层 UVC 为其传递依赖 [violet000/AndroidUVCCamera](https://github.com/violet000/AndroidUVCCamera)。本机摄像头默认**前置**；USB 外接走 `startFaceVerifyByUsbCamera`。
 
 ```java
 UsbCamera camera = new UsbCamera();
+// USB 外接
 camera.startFaceVerifyByUsbCamera(this, size, baseUrl);
+// 手机前置摄像头
+camera.startFaceVerifyByCamera(this, baseUrl);
+// 需要后置时：camera.startFaceVerifyByCamera(this, baseUrl, Camera.CameraInfo.CAMERA_FACING_BACK);
 
 @Override
 protected void onActivityResult(int requestCode, int resultCode, Intent data) {
