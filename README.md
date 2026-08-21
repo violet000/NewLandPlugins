@@ -40,7 +40,7 @@ dependencyResolutionManagement {
 
 ```gradle
 dependencies {
-    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.8')
+    implementation platform('com.github.violet000.NewLandPlugins:newland-bom:1.1.9')
     implementation 'com.github.violet000.NewLandPlugins:uhf'
     implementation 'com.github.violet000.NewLandPlugins:n1-scanner'
 }
@@ -50,9 +50,9 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.8'
+    implementation 'com.github.violet000.NewLandPlugins:newland-all:1.1.9'
     // 紫金 / Chainway（原 Cordova 插件）：
-    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.8'
+    // implementation 'com.github.violet000.NewLandPlugins:zijin-all:1.1.9'
 }
 ```
 
@@ -61,10 +61,10 @@ dependencies {
 紫金能力按需引入：
 
 ```gradle
-implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.8'
-implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.8'
-implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.8'
-implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.8'
+implementation 'com.github.violet000.NewLandPlugins:zijin-uhf:1.1.9'
+implementation 'com.github.violet000.NewLandPlugins:zijin-scan:1.1.9'
+implementation 'com.github.violet000.NewLandPlugins:zijin-fingerprint:1.1.9'
+implementation 'com.github.violet000.NewLandPlugins:usb-camera:1.1.9'
 ```
 
 ## 用法
