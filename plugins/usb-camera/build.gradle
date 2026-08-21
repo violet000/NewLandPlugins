@@ -16,6 +16,6 @@ apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
     api project(':newland-core')
-    // 1.0.6：撤回裁剪框右移，轮廓与识别区重新对齐
-    api 'com.github.violet000:USBCamera:1.0.6'
+    // 1.0.7：纠正人脸朝向并选取最佳帧
+    api 'com.github.violet000:USBCamera:1.0.7'
 }
