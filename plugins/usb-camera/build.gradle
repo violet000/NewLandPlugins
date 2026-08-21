@@ -16,6 +16,6 @@ apply from: rootProject.file('gradle/publish-module.gradle')
 
 dependencies {
     api project(':newland-core')
-    // 1.0.5：只右移识别裁剪框，轮廓恢复原位
-    api 'com.github.violet000:USBCamera:1.0.5'
+    // 1.0.6：撤回裁剪框右移，轮廓与识别区重新对齐
+    api 'com.github.violet000:USBCamera:1.0.6'
 }
