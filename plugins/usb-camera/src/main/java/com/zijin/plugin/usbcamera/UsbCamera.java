@@ -26,7 +26,7 @@ public class UsbCamera {
     private int pendingRequestCode = -1;
 
     public void startFaceVerifyByUsbCamera(Activity activity, String size, String baseUrl) {
-        ScreenBrightnessHelper.install(activity);
+        prepare(activity);
         Intent intent = new Intent(activity, UsbFaceVerifyActivity.class);
         intent.putExtra("doWhat", UsbFaceVerifyActivity.FOR_LOGIN);
         intent.putExtra("size", size);
@@ -37,7 +37,7 @@ public class UsbCamera {
     }
 
     public void startGetUserInfoByUsbCamera(Activity activity, String size, String baseUrl, String authorization) {
-        ScreenBrightnessHelper.install(activity);
+        prepare(activity);
         Intent intent = new Intent(activity, UsbFaceVerifyActivity.class);
         intent.putExtra("doWhat", UsbFaceVerifyActivity.FOR_USER_INFO);
         intent.putExtra("size", size);
@@ -53,7 +53,7 @@ public class UsbCamera {
     }
 
     public void startGetUserInfoByCamera(Activity activity, String baseUrl, String authorization, int cameraFacing) {
-        ScreenBrightnessHelper.install(activity);
+        prepare(activity);
         Intent intent = new Intent(activity, CameraUserInfoActivity.class);
         intent.putExtra("base_url", baseUrl);
         intent.putExtra("authorization", "Bearer " + authorization);
@@ -68,13 +68,18 @@ public class UsbCamera {
     }
 
     public void startFaceVerifyByCamera(Activity activity, String baseUrl, int cameraFacing) {
-        ScreenBrightnessHelper.install(activity);
+        prepare(activity);
         Intent intent = new Intent(activity, CameraActivity.class);
         intent.putExtra("base_url", baseUrl);
         intent.putExtra(CameraActivity.EXTRA_CAMERA_FACING, cameraFacing);
         pendingDoWhat = 0;
         pendingRequestCode = CameraActivity.REQ_START_CAMERA;
         activity.startActivityForResult(intent, pendingRequestCode);
+    }
+
+    private void prepare(Activity activity) {
+        ScreenBrightnessHelper.install(activity);
+        FaceFramingHelper.install(activity);
     }
 
     public void onActivityResult(Context context, int requestCode, int resultCode, Intent data, ResultCallback callback) {
