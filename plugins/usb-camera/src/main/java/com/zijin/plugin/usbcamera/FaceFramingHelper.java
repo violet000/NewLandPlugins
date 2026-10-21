@@ -3,7 +3,6 @@ package com.zijin.plugin.usbcamera;
 import android.app.Activity;
 import android.app.Application;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.Bundle;
 import android.os.Handler;
@@ -17,15 +16,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Pulls the USB camera to its widest zoom and enlarges the capture window so
- * the uploaded frame is more likely to contain the whole face.
+ * Sends the full preview frame to the backend and, on USB cameras that
+ * support it, pulls zoom to the widest setting.
  */
 final class FaceFramingHelper {
 
     private static final String TAG = "UsbCamera";
     private static final String USB_ACTIVITY = "com.zijin.camera_lib.UsbFaceVerifyActivity";
-    /** How much to grow the library's center crop, clamped to the preview. */
-    private static final float CAPTURE_SCALE = 1.6f;
+    private static final String CAMERA_ACTIVITY = "com.zijin.camera_lib.CameraActivity";
+    private static final String CAMERA_USER_INFO_ACTIVITY = "com.zijin.camera_lib.CameraUserInfoActivity";
     private static final int ZOOM_WIDEST = 0;
     private static final int POLL_MS = 400;
     private static final int MAX_ATTEMPTS = 20;
@@ -48,8 +47,14 @@ final class FaceFramingHelper {
         }
     }
 
-    private static boolean isUsbFaceActivity(Activity activity) {
-        return activity != null && USB_ACTIVITY.equals(activity.getClass().getName());
+    private static boolean isFaceActivity(Activity activity) {
+        if (activity == null) {
+            return false;
+        }
+        String name = activity.getClass().getName();
+        return USB_ACTIVITY.equals(name)
+                || CAMERA_ACTIVITY.equals(name)
+                || CAMERA_USER_INFO_ACTIVITY.equals(name);
     }
 
     private static void watch(Activity activity) {
@@ -57,8 +62,12 @@ final class FaceFramingHelper {
         Integer previous = generations.get(id);
         int generation = (previous == null ? 0 : previous) + 1;
         generations.put(id, generation);
-        widenCapture(activity, id);
-        pollZoom(activity, id, generation, 0, 0);
+        if (USB_ACTIVITY.equals(activity.getClass().getName())) {
+            useFullUsbFrame(activity, id);
+            pollZoom(activity, id, generation, 0, 0);
+        } else {
+            pollFullLocalFrame(activity, id, generation, 0, 0);
+        }
     }
 
     private static void stop(Activity activity) {
@@ -70,7 +79,7 @@ final class FaceFramingHelper {
         widened.remove(id);
     }
 
-    private static void widenCapture(Activity activity, int id) {
+    private static void useFullUsbFrame(Activity activity, int id) {
         if (!widened.add(id)) {
             return;
         }
@@ -81,20 +90,57 @@ final class FaceFramingHelper {
                 widened.remove(id);
                 return;
             }
-            Rect bounds = region.getBounds();
-            int centerX = (bounds.left + bounds.right) / 2;
-            int centerY = (bounds.top + bounds.bottom) / 2;
-            int halfWidth = Math.round(bounds.width() * CAPTURE_SCALE / 2f);
-            int halfHeight = Math.round(bounds.height() * CAPTURE_SCALE / 2f);
-            int left = clamp(centerX - halfWidth, 0, preview.x - 2);
-            int top = clamp(centerY - halfHeight, 0, preview.y - 2);
-            int right = clamp(centerX + halfWidth, left + 2, preview.x);
-            int bottom = clamp(centerY + halfHeight, top + 2, preview.y);
-            region.set(left, top, right, bottom);
-            Log.i(TAG, "face capture region " + left + "," + top + "," + right + "," + bottom);
+            region.set(0, 0, preview.x, preview.y);
+            Log.i(TAG, "upload full usb frame " + preview.x + "x" + preview.y);
         } catch (ReflectiveOperationException e) {
             widened.remove(id);
-            Log.w(TAG, "widen face region failed", e);
+            Log.w(TAG, "use full usb frame failed", e);
+        }
+    }
+
+    private static void pollFullLocalFrame(Activity activity, int id, int generation, int attempt, int applied) {
+        Integer current = generations.get(id);
+        if (current == null || current != generation || activity.isFinishing()) {
+            return;
+        }
+        int nextApplied = applied;
+        if (useFullLocalFrame(activity)) {
+            nextApplied = applied + 1;
+            if (nextApplied >= REPEAT_ZOOM) {
+                return;
+            }
+        } else if (attempt >= MAX_ATTEMPTS) {
+            return;
+        }
+        int followApplied = nextApplied;
+        int followAttempt = attempt + 1;
+        MAIN.postDelayed(
+                () -> pollFullLocalFrame(activity, id, generation, followAttempt, followApplied),
+                POLL_MS);
+    }
+
+    private static boolean useFullLocalFrame(Activity activity) {
+        try {
+            Object mask = field(activity, "faceRegionMask").get(activity);
+            Object preview = field(activity, "previewSize").get(activity);
+            if (mask == null || preview == null) {
+                return false;
+            }
+            int longer = (Integer) invoke(preview, "getLonger");
+            int shorter = (Integer) invoke(preview, "getShorter");
+            if (longer < 2 || shorter < 2) {
+                return false;
+            }
+            Region region = (Region) invoke(mask, "getFaceMaskRegion");
+            if (region == null) {
+                return false;
+            }
+            region.set(0, 0, longer, shorter);
+            Log.i(TAG, "upload full camera frame " + longer + "x" + shorter);
+            return true;
+        } catch (ReflectiveOperationException e) {
+            Log.w(TAG, "use full camera frame failed", e);
+            return false;
         }
     }
 
@@ -155,15 +201,11 @@ final class FaceFramingHelper {
         return field;
     }
 
-    private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(value, max));
-    }
-
     private static final Application.ActivityLifecycleCallbacks WATCHER =
             new Application.ActivityLifecycleCallbacks() {
                 @Override
                 public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-                    if (isUsbFaceActivity(activity)) {
+                    if (isFaceActivity(activity)) {
                         watch(activity);
                     }
                 }
@@ -174,14 +216,14 @@ final class FaceFramingHelper {
 
                 @Override
                 public void onActivityResumed(Activity activity) {
-                    if (isUsbFaceActivity(activity)) {
+                    if (isFaceActivity(activity)) {
                         watch(activity);
                     }
                 }
 
                 @Override
                 public void onActivityPaused(Activity activity) {
-                    if (isUsbFaceActivity(activity)) {
+                    if (isFaceActivity(activity)) {
                         generations.remove(System.identityHashCode(activity));
                     }
                 }
@@ -196,7 +238,7 @@ final class FaceFramingHelper {
 
                 @Override
                 public void onActivityDestroyed(Activity activity) {
-                    if (isUsbFaceActivity(activity)) {
+                    if (isFaceActivity(activity)) {
                         stop(activity);
                     }
                 }
