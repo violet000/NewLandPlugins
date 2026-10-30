@@ -62,6 +62,7 @@ final class FaceFramingHelper {
         Integer previous = generations.get(id);
         int generation = (previous == null ? 0 : previous) + 1;
         generations.put(id, generation);
+        FaceSuccessGuard.arm(activity);
         if (USB_ACTIVITY.equals(activity.getClass().getName())) {
             useFullUsbFrame(activity, id);
             pollZoom(activity, id, generation, 0, 0);
@@ -77,6 +78,7 @@ final class FaceFramingHelper {
         int id = System.identityHashCode(activity);
         generations.remove(id);
         widened.remove(id);
+        FaceSuccessGuard.disarm(activity);
     }
 
     private static void useFullUsbFrame(Activity activity, int id) {
@@ -218,6 +220,13 @@ final class FaceFramingHelper {
                 public void onActivityResumed(Activity activity) {
                     if (isFaceActivity(activity)) {
                         watch(activity);
+                    }
+                }
+
+                @Override
+                public void onActivityPrePaused(Activity activity) {
+                    if (isFaceActivity(activity)) {
+                        FaceSuccessGuard.beforePause(activity);
                     }
                 }
 
