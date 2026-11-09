@@ -39,9 +39,10 @@ final class FaceSuccessGuard {
     private static final int STATUS_VERIFY_SUCCESS = 2070;
     /** Time for the preview callback to leave native code before the camera is closed. */
     private static final long SETTLE_MS = 500L;
-    private static final int MAX_RESULT_CHARS = 200_000;
+    /** originalPhoto is kept out of the activity result; larger than this is a picture. */
+    private static final int MAX_PHOTO_CHARS = 4096;
+    private static final int MAX_RAW_CHARS = 2_000_000;
 
-    private static final AtomicBoolean hiddenApiReady = new AtomicBoolean();
     private static final AtomicBoolean interceptorReady = new AtomicBoolean();
     private static final AtomicBoolean handlerHooked = new AtomicBoolean();
     private static final AtomicReference<String> lastRaw = new AtomicReference<>();
@@ -56,7 +57,6 @@ final class FaceSuccessGuard {
         if (activity == null) {
             return;
         }
-        exemptHiddenApi();
         installResponseCapture();
         if (!armed.add(System.identityHashCode(activity))) {
             return;
@@ -150,25 +150,45 @@ final class FaceSuccessGuard {
 
     private static Object responsePayload(Object model) {
         String raw = lastRaw.getAndSet(null);
-        if (raw == null || raw.length() > MAX_RESULT_CHARS) {
-            return model;
+        if (raw != null && raw.length() <= MAX_RAW_CHARS) {
+            try {
+                Object parsed = jsonValue(new JSONObject(raw));
+                if (parsed instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> fields = (Map<String, Object>) parsed;
+                    omitLargePhoto(fields);
+                    return fields;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "parse face response failed", t);
+            }
+        }
+        clearModelPhoto(model);
+        return model;
+    }
+
+    private static void omitLargePhoto(Map<String, Object> fields) {
+        Object photo = fields.get("originalPhoto");
+        if (photo instanceof String && ((String) photo).length() > MAX_PHOTO_CHARS) {
+            fields.remove("originalPhoto");
+            Log.i(TAG, "omit originalPhoto from activity result, len=" + ((String) photo).length());
+        }
+    }
+
+    private static void clearModelPhoto(Object model) {
+        if (model == null) {
+            return;
         }
         try {
-            Object parsed = jsonValue(new JSONObject(raw));
-            if (parsed instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> fields = (Map<String, Object>) parsed;
-                Object photo = fields.remove("originalPhoto");
-                if (photo instanceof String && ((String) photo).length() > 4096) {
-                    Log.i(TAG, "left originalPhoto out of the activity result");
-                } else if (photo != null) {
-                    fields.put("originalPhoto", photo);
-                }
+            Method getter = model.getClass().getMethod("getOriginalPhoto");
+            Object photo = getter.invoke(model);
+            if (!(photo instanceof String) || ((String) photo).length() <= MAX_PHOTO_CHARS) {
+                return;
             }
-            return parsed;
-        } catch (Throwable t) {
-            Log.w(TAG, "keep parsed face model", t);
-            return model;
+            model.getClass().getMethod("setOriginalPhoto", String.class).invoke(model, "");
+            Log.i(TAG, "cleared originalPhoto before activity result, len=" + ((String) photo).length());
+        } catch (ReflectiveOperationException ignored) {
+            // Login results have no original photo.
         }
     }
 
@@ -345,22 +365,4 @@ final class FaceSuccessGuard {
         }
     }
 
-    private static void exemptHiddenApi() {
-        if (!hiddenApiReady.compareAndSet(false, true)) {
-            return;
-        }
-        try {
-            Method forName = Class.class.getDeclaredMethod("forName", String.class);
-            Method getDeclaredMethod = Class.class.getDeclaredMethod(
-                    "getDeclaredMethod", String.class, Class[].class);
-            Class<?> vmRuntime = (Class<?>) forName.invoke(null, "dalvik.system.VMRuntime");
-            Method getRuntime = (Method) getDeclaredMethod.invoke(vmRuntime, "getRuntime", null);
-            Method setHiddenApiExemptions = (Method) getDeclaredMethod.invoke(
-                    vmRuntime, "setHiddenApiExemptions", new Class[]{String[].class});
-            Object runtime = getRuntime.invoke(null);
-            setHiddenApiExemptions.invoke(runtime, (Object) new String[]{"Landroid/os/Handler;"});
-        } catch (Throwable t) {
-            Log.w(TAG, "hidden api exemption failed", t);
-        }
-    }
 }
