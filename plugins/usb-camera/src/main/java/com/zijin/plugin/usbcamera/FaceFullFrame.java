@@ -3,10 +3,12 @@ package com.zijin.plugin.usbcamera;
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.Region;
+import android.graphics.YuvImage;
 import android.hardware.Camera;
 import android.util.Base64;
 import android.util.Log;
@@ -16,11 +18,15 @@ import com.zijin.camera_lib.hepler.FaceCaptureHelper;
 import com.zijin.camera_lib.hepler.ImageConvertUtil;
 import com.zijin.camera_lib.hepler.PictureHelper;
 
+import java.io.ByteArrayOutputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The face library detects and uploads the same cropped bitmap. Keep detection
@@ -32,7 +38,10 @@ final class FaceFullFrame {
     private static final String TAG = "UsbCamera";
     private static final String USB_ACTIVITY = "com.zijin.camera_lib.UsbFaceVerifyActivity";
     private static final int MAX_NV21_BYTES = 8_000_000;
+    /** Frames the detector actually consumes, long enough to cover its 1s sample window. */
+    private static final int KEPT_FRAMES = 6;
 
+    private static final ArrayDeque<SavedFrame> savedFrames = new ArrayDeque<>();
     private static byte[] latestNv21;
     private static int latestWidth;
     private static int latestHeight;
@@ -49,6 +58,7 @@ final class FaceFullFrame {
             latestWidth = 0;
             latestHeight = 0;
             latestActivity = new WeakReference<>(null);
+            savedFrames.clear();
         }
     }
 
@@ -176,53 +186,138 @@ final class FaceFullFrame {
         boolean local;
         Activity activity;
         synchronized (FaceFullFrame.class) {
-            if (latestNv21 == null) {
+            boolean hasSaved = !savedFrames.isEmpty();
+            if (latestNv21 == null && !hasSaved) {
                 return null;
             }
-            nv21 = latestNv21.clone();
+            nv21 = latestNv21 == null ? null : latestNv21.clone();
             width = latestWidth;
             height = latestHeight;
             local = latestLocal;
             activity = latestActivity.get();
         }
-        Bitmap full = ImageConvertUtil.nv21ToBitmap(nv21, width, height);
-        if (full == null) {
-            return null;
-        }
+        Bitmap uploaded = decodeUploaded(uploadedBase64);
         try {
-            if (local && activity != null) {
-                full = orientLocalPreview(activity, full);
+            Chosen chosen = chooseFrame(nv21, width, height, local, activity, uploaded);
+            if (chosen == null || chosen.bitmap == null) {
+                return null;
             }
-            Bitmap uploaded = decodeUploaded(uploadedBase64);
-            int orientation = 0;
-            if (uploaded != null) {
-                try {
-                    orientation = matchOrientation(full, detectionBounds(activity, local, full), uploaded);
-                } finally {
-                    if (!uploaded.isRecycled()) {
-                        uploaded.recycle();
-                    }
-                }
-            }
-            Bitmap upright = applyOrientation(full, orientation);
-            if (upright != full) {
-                if (!full.isRecycled()) {
-                    full.recycle();
-                }
-                full = upright;
-            }
-            Log.i(TAG, "upload full frame " + full.getWidth() + "x" + full.getHeight());
-            String encoded = PictureHelper.processPicture(full, PictureHelper.JPEG);
-            if (!full.isRecycled()) {
-                full.recycle();
+            Log.i(TAG, "upload full frame " + chosen.bitmap.getWidth() + "x" + chosen.bitmap.getHeight()
+                    + " orientation=" + chosen.orientation + " score=" + chosen.score
+                    + " candidates=" + chosen.candidates);
+            String encoded = PictureHelper.processPicture(chosen.bitmap, PictureHelper.JPEG);
+            if (!chosen.bitmap.isRecycled()) {
+                chosen.bitmap.recycle();
             }
             return encoded == null || encoded.isEmpty() ? null : encoded;
         } catch (Throwable t) {
             Log.w(TAG, "encode full frame failed", t);
-            if (!full.isRecycled()) {
-                full.recycle();
-            }
             return null;
+        } finally {
+            if (uploaded != null && !uploaded.isRecycled()) {
+                uploaded.recycle();
+            }
+        }
+    }
+
+    private static Chosen chooseFrame(byte[] latest, int latestW, int latestH, boolean latestIsLocal,
+                                       Activity latestOwner, Bitmap uploaded) {
+        List<SavedFrame> frames;
+        synchronized (FaceFullFrame.class) {
+            frames = new ArrayList<>(savedFrames);
+        }
+        Chosen best = null;
+        int candidates = 0;
+        for (SavedFrame frame : frames) {
+            Bitmap bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.length);
+            if (bitmap == null) {
+                continue;
+            }
+            candidates++;
+            Chosen chosen = orient(bitmap, frame.local, frame.activity.get(), uploaded);
+            best = better(best, chosen);
+        }
+        if (best == null && latest != null) {
+            Bitmap bitmap = ImageConvertUtil.nv21ToBitmap(latest, latestW, latestH);
+            if (bitmap != null) {
+                candidates++;
+                best = orient(bitmap, latestIsLocal, latestOwner, uploaded);
+            }
+        }
+        if (best != null) {
+            best.candidates = candidates;
+        }
+        return best;
+    }
+
+    private static Chosen orient(Bitmap bitmap, boolean local, Activity activity, Bitmap uploaded) {
+        if (local && activity != null) {
+            bitmap = orientLocalPreview(activity, bitmap);
+        }
+        int orientation = 0;
+        long score = 0L;
+        if (uploaded != null) {
+            Match match = matchOrientation(bitmap, detectionBounds(activity, local, bitmap), uploaded);
+            orientation = match.index;
+            score = match.score;
+        }
+        Bitmap upright = applyOrientation(bitmap, orientation);
+        if (upright != bitmap && !bitmap.isRecycled()) {
+            bitmap.recycle();
+        }
+        Chosen chosen = new Chosen();
+        chosen.bitmap = upright;
+        chosen.orientation = orientation;
+        chosen.score = score;
+        return chosen;
+    }
+
+    private static Chosen better(Chosen current, Chosen next) {
+        if (next == null || next.bitmap == null) {
+            return current;
+        }
+        if (current == null || next.score < current.score) {
+            if (current != null && current.bitmap != null && !current.bitmap.isRecycled()) {
+                current.bitmap.recycle();
+            }
+            return next;
+        }
+        if (!next.bitmap.isRecycled()) {
+            next.bitmap.recycle();
+        }
+        return current;
+    }
+
+    private static void keepSubmittedFrame(Activity activity, byte[] nv21, int width, int height, boolean local) {
+        try {
+            YuvImage image = new YuvImage(nv21, ImageFormat.NV21, width, height, null);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (!image.compressToJpeg(new Rect(0, 0, width, height), 90, out)) {
+                return;
+            }
+            SavedFrame frame = new SavedFrame(out.toByteArray(), width, height, local,
+                    new WeakReference<>(activity));
+            synchronized (FaceFullFrame.class) {
+                savedFrames.addLast(frame);
+                while (savedFrames.size() > KEPT_FRAMES) {
+                    savedFrames.removeFirst();
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "keep submitted frame failed", t);
+        }
+    }
+
+    private static boolean frameWasSubmitted(Activity activity) {
+        try {
+            Object value = readField(activity, "frameCount");
+            if (!(value instanceof Long)) {
+                return false;
+            }
+            long count = (Long) value;
+            return count > 0 && count % 6L == 0L;
+        } catch (ReflectiveOperationException e) {
+            return false;
         }
     }
 
@@ -267,10 +362,11 @@ final class FaceFullFrame {
         return entire;
     }
 
-    private static int matchOrientation(Bitmap full, Rect bounds, Bitmap uploaded) {
+    private static Match matchOrientation(Bitmap full, Rect bounds, Bitmap uploaded) {
+        Match match = new Match();
         Bitmap crop = crop(full, bounds);
         if (crop == null) {
-            return 0;
+            return match;
         }
         Bitmap flipped = null;
         Bitmap[] variants = new Bitmap[4];
@@ -280,16 +376,14 @@ final class FaceFullFrame {
             variants[1] = rotate180(crop);
             variants[2] = flipped;
             variants[3] = rotate180(flipped);
-            int best = 0;
-            long bestScore = Long.MAX_VALUE;
             for (int i = 0; i < variants.length; i++) {
                 long score = sampleDifference(variants[i], uploaded);
-                if (score < bestScore) {
-                    bestScore = score;
-                    best = i;
+                if (score < match.score) {
+                    match.score = score;
+                    match.index = i;
                 }
             }
-            return best;
+            return match;
         } finally {
             recycleDistinct(variants, full);
         }
@@ -514,10 +608,52 @@ final class FaceFullFrame {
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
             int[] size = localSize(activity);
-            if (size != null) {
-                remember(activity, data, size[0], size[1], true);
-            }
+            byte[] copy = copyNv21(data, size);
             delegate.onPreviewFrame(data, camera);
+            if (copy != null && frameWasSubmitted(activity)) {
+                keepSubmittedFrame(activity, copy, size[0], size[1], true);
+            }
         }
+    }
+
+    private static byte[] copyNv21(byte[] data, int[] size) {
+        if (data == null || size == null) {
+            return null;
+        }
+        int bytes = size[0] * size[1] * 3 / 2;
+        if (bytes <= 0 || bytes > MAX_NV21_BYTES || data.length < bytes) {
+            return null;
+        }
+        byte[] copy = new byte[bytes];
+        System.arraycopy(data, 0, copy, 0, bytes);
+        return copy;
+    }
+
+    private static final class SavedFrame {
+        final byte[] jpeg;
+        final int width;
+        final int height;
+        final boolean local;
+        final WeakReference<Activity> activity;
+
+        SavedFrame(byte[] jpeg, int width, int height, boolean local, WeakReference<Activity> activity) {
+            this.jpeg = jpeg;
+            this.width = width;
+            this.height = height;
+            this.local = local;
+            this.activity = activity;
+        }
+    }
+
+    private static final class Match {
+        int index;
+        long score = Long.MAX_VALUE;
+    }
+
+    private static final class Chosen {
+        Bitmap bitmap;
+        int orientation;
+        long score = Long.MAX_VALUE;
+        int candidates;
     }
 }
