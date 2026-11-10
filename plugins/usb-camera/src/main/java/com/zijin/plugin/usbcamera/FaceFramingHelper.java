@@ -2,6 +2,7 @@ package com.zijin.plugin.usbcamera;
 
 import android.app.Activity;
 import android.app.Application;
+import android.hardware.Camera;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Keeps face detection on the original recognition box. The uploaded picture is
  * swapped for the full preview elsewhere, so this class does not enlarge the
- * box. USB cameras that support zoom are pulled to the widest setting.
+ * box. USB cameras and the front camera are pulled to the widest zoom.
  */
 final class FaceFramingHelper {
 
@@ -64,6 +65,8 @@ final class FaceFramingHelper {
         pollGrabber(activity, id, generation, 0);
         if (USB_ACTIVITY.equals(activity.getClass().getName())) {
             pollZoom(activity, id, generation, 0, 0);
+        } else {
+            pollFrontZoom(activity, id, generation, 0, 0);
         }
     }
 
@@ -126,6 +129,56 @@ final class FaceFramingHelper {
             return true;
         } catch (Throwable t) {
             Log.w(TAG, "set widest zoom failed", t);
+            return false;
+        }
+    }
+
+    private static void pollFrontZoom(Activity activity, int id, int generation, int attempt, int applied) {
+        Integer current = generations.get(id);
+        if (current == null || current != generation || activity.isFinishing()) {
+            return;
+        }
+        int nextApplied = applied;
+        if (applyWidestFrontZoom(activity)) {
+            nextApplied = applied + 1;
+            if (nextApplied >= REPEAT_ZOOM) {
+                return;
+            }
+        } else if (attempt >= MAX_ATTEMPTS) {
+            return;
+        }
+        int followApplied = nextApplied;
+        int followAttempt = attempt + 1;
+        MAIN.postDelayed(
+                () -> pollFrontZoom(activity, id, generation, followAttempt, followApplied),
+                POLL_MS);
+    }
+
+    private static boolean applyWidestFrontZoom(Activity activity) {
+        try {
+            Object cameraObject = field(activity, "camera").get(activity);
+            Object info = field(activity, "cameraInfo").get(activity);
+            if (!(cameraObject instanceof Camera) || !(info instanceof Camera.CameraInfo)) {
+                return false;
+            }
+            if (((Camera.CameraInfo) info).facing != Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                return true;
+            }
+            Camera camera = (Camera) cameraObject;
+            Camera.Parameters parameters = camera.getParameters();
+            if (parameters == null || !parameters.isZoomSupported()) {
+                Log.i(TAG, "front camera has no zoom control");
+                return true;
+            }
+            if (parameters.getZoom() != ZOOM_WIDEST) {
+                parameters.setZoom(ZOOM_WIDEST);
+                camera.setParameters(parameters);
+            }
+            Log.i(TAG, "front camera zoom set to widest, current="
+                    + camera.getParameters().getZoom() + " max=" + parameters.getMaxZoom());
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "set front camera zoom failed", t);
             return false;
         }
     }
