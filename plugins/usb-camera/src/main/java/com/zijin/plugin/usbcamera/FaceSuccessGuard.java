@@ -350,13 +350,27 @@ final class FaceSuccessGuard {
             }
             String text = readUtf8(body);
             if (text == null) {
+                Log.w(TAG, "face upload body is empty, url=" + urlText);
                 return request;
             }
             String replaced = FaceFullFrame.replaceUpload(text);
-            return rebuildRequest(request, body, replaced != null ? replaced : text);
+            String outgoing = replaced != null ? replaced : text;
+            logUpload(urlText, outgoing);
+            return rebuildRequest(request, body, outgoing);
         } catch (Throwable t) {
             Log.w(TAG, "replace full frame upload failed", t);
             return request;
+        }
+    }
+
+    private static void logUpload(String url, String body) {
+        Log.i(TAG, "face upload url=" + url + " chars=" + body.length());
+        final int chunk = 3000;
+        int parts = Math.max(1, (body.length() + chunk - 1) / chunk);
+        for (int i = 0; i < parts; i++) {
+            int start = i * chunk;
+            int end = Math.min(body.length(), start + chunk);
+            Log.i(TAG, "face upload [" + (i + 1) + "/" + parts + "] " + body.substring(start, end));
         }
     }
 
