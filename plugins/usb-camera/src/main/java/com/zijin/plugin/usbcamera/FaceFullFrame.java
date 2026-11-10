@@ -27,6 +27,8 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * The face library detects and uploads the same cropped bitmap. Keep detection
@@ -42,6 +44,11 @@ final class FaceFullFrame {
     private static final int KEPT_FRAMES = 6;
 
     private static final ArrayDeque<SavedFrame> savedFrames = new ArrayDeque<>();
+    private static final ExecutorService ENCODER = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "face-full-frame");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static byte[] latestNv21;
     private static int latestWidth;
     private static int latestHeight;
@@ -74,7 +81,7 @@ final class FaceFullFrame {
                 return installUsb(activity);
             }
             installFailure = null;
-            return installLocal(activity);
+            return installExecutor(activity);
         } catch (Throwable t) {
             installFailure = String.valueOf(t);
             return false;
@@ -135,6 +142,66 @@ final class FaceFullFrame {
         proxy.getClass().getMethod("setPreviewCallback", callbackType).invoke(proxy, wrapped);
         Log.i(TAG, "usb preview hooked for full-frame upload");
         return true;
+    }
+
+    private static boolean installExecutor(Activity activity) throws ReflectiveOperationException {
+        Field field = findField(activity.getClass(), "faceExecutor");
+        if (field == null) {
+            installFailure = "faceExecutor missing";
+            return false;
+        }
+        Object current = field.get(activity);
+        if (!(current instanceof ExecutorService)) {
+            return false;
+        }
+        if (Proxy.isProxyClass(current.getClass())
+                && Proxy.getInvocationHandler(current) instanceof FrameTap) {
+            return true;
+        }
+        ClassLoader loader = current.getClass().getClassLoader();
+        Object wrapped = Proxy.newProxyInstance(
+                loader == null ? ExecutorService.class.getClassLoader() : loader,
+                new Class<?>[]{ExecutorService.class},
+                new FrameTap(activity, (ExecutorService) current));
+        field.set(activity, wrapped);
+        Log.i(TAG, "camera frame executor hooked, detection stays on the recognition box");
+        return true;
+    }
+
+    private static void captureSubmitted(Activity activity, Runnable command) {
+        byte[] data = nv21From(command);
+        int[] size = localSize(activity);
+        byte[] copy = copyNv21(data, size);
+        if (copy == null) {
+            return;
+        }
+        remember(activity, copy, size[0], size[1], true);
+        ENCODER.execute(() -> keepSubmittedFrame(activity, copy, size[0], size[1], true));
+    }
+
+    private static byte[] nv21From(Runnable command) {
+        if (command == null) {
+            return null;
+        }
+        Class<?> type = command.getClass();
+        while (type != null) {
+            for (Field field : type.getDeclaredFields()) {
+                if (!field.getType().equals(byte[].class)) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(command);
+                    if (value instanceof byte[] && ((byte[]) value).length > 0) {
+                        return (byte[]) value;
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                    return null;
+                }
+            }
+            type = type.getSuperclass();
+        }
+        return null;
     }
 
     private static boolean installLocal(Activity activity) throws ReflectiveOperationException {
@@ -565,6 +632,31 @@ final class FaceFullFrame {
             return new int[]{width, height};
         } catch (ReflectiveOperationException | ClassCastException e) {
             return null;
+        }
+    }
+
+    private static final class FrameTap implements InvocationHandler {
+        private final Activity activity;
+        private final ExecutorService delegate;
+
+        private FrameTap(Activity activity, ExecutorService delegate) {
+            this.activity = activity;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if ("execute".equals(method.getName())
+                    && args != null
+                    && args.length == 1
+                    && args[0] instanceof Runnable) {
+                captureSubmitted(activity, (Runnable) args[0]);
+            }
+            try {
+                return method.invoke(delegate, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                throw e.getCause() == null ? e : e.getCause();
+            }
         }
     }
 

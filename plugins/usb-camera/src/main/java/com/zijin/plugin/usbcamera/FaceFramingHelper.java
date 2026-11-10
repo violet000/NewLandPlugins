@@ -2,8 +2,6 @@ package com.zijin.plugin.usbcamera;
 
 import android.app.Activity;
 import android.app.Application;
-import android.graphics.Rect;
-import android.graphics.Region;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,9 +13,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Leaves face detection on the recognition box, extended above and below so the
- * uploaded picture still shows the chin after the library turns it upright.
- * USB cameras that support zoom are pulled to the widest setting.
+ * Keeps face detection on the original recognition box. The uploaded picture is
+ * swapped for the full preview elsewhere, so this class does not enlarge the
+ * box. USB cameras that support zoom are pulled to the widest setting.
  */
 final class FaceFramingHelper {
 
@@ -34,11 +32,6 @@ final class FaceFramingHelper {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ConcurrentHashMap<Integer, Integer> generations = new ConcurrentHashMap<>();
     private static final int GRAB_ATTEMPTS = 40;
-    /** Extra vertical room, as a fraction of the recognition box height. */
-    private static final float CHIN_PAD_Y = 0.40f;
-    private static final float CHIN_PAD_X = 0.08f;
-
-    private static final ConcurrentHashMap<Integer, Rect> chinTargets = new ConcurrentHashMap<>();
 
     private FaceFramingHelper() {
     }
@@ -69,7 +62,6 @@ final class FaceFramingHelper {
         generations.put(id, generation);
         FaceSuccessGuard.arm(activity);
         pollGrabber(activity, id, generation, 0);
-        pollChin(activity, id, generation, 0);
         if (USB_ACTIVITY.equals(activity.getClass().getName())) {
             pollZoom(activity, id, generation, 0, 0);
         }
@@ -81,7 +73,6 @@ final class FaceFramingHelper {
         }
         int id = System.identityHashCode(activity);
         generations.remove(id);
-        chinTargets.remove(id);
         FaceFullFrame.clear();
         FaceSuccessGuard.disarm(activity);
     }
@@ -96,93 +87,6 @@ final class FaceFramingHelper {
             Log.w(TAG, "full-frame grabber was not installed: " + FaceFullFrame.installFailure());
         }
         MAIN.postDelayed(() -> pollGrabber(activity, id, generation, attempt + 1), POLL_MS);
-    }
-
-    private static void pollChin(Activity activity, int id, int generation, int attempt) {
-        Integer current = generations.get(id);
-        if (current == null || current != generation || activity.isFinishing()) {
-            return;
-        }
-        if (extendForChin(activity, id) || attempt >= GRAB_ATTEMPTS) {
-            return;
-        }
-        MAIN.postDelayed(() -> pollChin(activity, id, generation, attempt + 1), POLL_MS);
-    }
-
-    /**
-     * Grows the recognition box up and down. The library turns that crop upright
-     * before upload, so a 180 degree result would hide the chin if only the
-     * bottom were extended.
-     */
-    private static boolean extendForChin(Activity activity, int id) {
-        try {
-            Region region = faceRegion(activity);
-            int[] frame = frameSize(activity);
-            if (region == null || frame == null) {
-                return false;
-            }
-            Rect now = region.getBounds();
-            if (now.width() < 2 || now.height() < 2) {
-                return false;
-            }
-            Rect target = chinTargets.get(id);
-            if (target == null) {
-                target = padded(now, frame[0], frame[1]);
-                chinTargets.put(id, target);
-            }
-            if (now.equals(target)) {
-                return true;
-            }
-            region.set(target.left, target.top, target.right, target.bottom);
-            Log.i(TAG, "face region extended for chin " + now + " -> " + target);
-            return true;
-        } catch (Throwable t) {
-            Log.w(TAG, "extend face region for chin failed", t);
-            return false;
-        }
-    }
-
-    private static Rect padded(Rect source, int frameWidth, int frameHeight) {
-        int padX = Math.max(1, Math.round(source.width() * CHIN_PAD_X));
-        int padY = Math.max(1, Math.round(source.height() * CHIN_PAD_Y));
-        int left = Math.max(0, source.left - padX);
-        int top = Math.max(0, source.top - padY);
-        int right = Math.min(frameWidth, source.right + padX);
-        int bottom = Math.min(frameHeight, source.bottom + padY);
-        return new Rect(left, top, Math.max(left + 2, right), Math.max(top + 2, bottom));
-    }
-
-    private static Region faceRegion(Activity activity) throws ReflectiveOperationException {
-        if (USB_ACTIVITY.equals(activity.getClass().getName())) {
-            Object region = field(activity, "faceRegion").get(activity);
-            return region instanceof Region ? (Region) region : null;
-        }
-        Object mask = field(activity, "faceRegionMask").get(activity);
-        if (mask == null) {
-            return null;
-        }
-        Object region = invoke(mask, "getFaceMaskRegion");
-        return region instanceof Region ? (Region) region : null;
-    }
-
-    private static int[] frameSize(Activity activity) throws ReflectiveOperationException {
-        Object preview = field(activity, "previewSize").get(activity);
-        if (preview == null) {
-            return null;
-        }
-        int width;
-        int height;
-        if (USB_ACTIVITY.equals(activity.getClass().getName())) {
-            width = (Integer) preview.getClass().getField("x").get(preview);
-            height = (Integer) preview.getClass().getField("y").get(preview);
-        } else {
-            width = (Integer) invoke(preview, "getLonger");
-            height = (Integer) invoke(preview, "getShorter");
-        }
-        if (width < 2 || height < 2) {
-            return null;
-        }
-        return new int[]{width, height};
     }
 
     private static void pollZoom(Activity activity, int id, int generation, int attempt, int applied) {
