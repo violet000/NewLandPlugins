@@ -2,8 +2,6 @@ package com.zijin.plugin.usbcamera;
 
 import android.app.Activity;
 import android.app.Application;
-import android.graphics.Point;
-import android.graphics.Region;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,13 +9,13 @@ import android.util.Log;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Sends the full preview frame to the backend and, on USB cameras that
- * support it, pulls zoom to the widest setting.
+ * Leaves the library recognition box in place so face detection stays on that
+ * small region, and lets {@link FaceFullFrame} upload the whole preview.
+ * USB cameras that support zoom are pulled to the widest setting.
  */
 final class FaceFramingHelper {
 
@@ -33,7 +31,7 @@ final class FaceFramingHelper {
     private static final AtomicBoolean installed = new AtomicBoolean();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ConcurrentHashMap<Integer, Integer> generations = new ConcurrentHashMap<>();
-    private static final Set<Integer> widened = ConcurrentHashMap.newKeySet();
+    private static final int GRAB_ATTEMPTS = 40;
 
     private FaceFramingHelper() {
     }
@@ -63,11 +61,9 @@ final class FaceFramingHelper {
         int generation = (previous == null ? 0 : previous) + 1;
         generations.put(id, generation);
         FaceSuccessGuard.arm(activity);
+        pollGrabber(activity, id, generation, 0);
         if (USB_ACTIVITY.equals(activity.getClass().getName())) {
-            useFullUsbFrame(activity, id);
             pollZoom(activity, id, generation, 0, 0);
-        } else {
-            pollFullLocalFrame(activity, id, generation, 0, 0);
         }
     }
 
@@ -77,73 +73,20 @@ final class FaceFramingHelper {
         }
         int id = System.identityHashCode(activity);
         generations.remove(id);
-        widened.remove(id);
+        FaceFullFrame.clear();
         FaceSuccessGuard.disarm(activity);
     }
 
-    private static void useFullUsbFrame(Activity activity, int id) {
-        if (!widened.add(id)) {
-            return;
-        }
-        try {
-            Point preview = (Point) field(activity, "previewSize").get(activity);
-            Region region = (Region) field(activity, "faceRegion").get(activity);
-            if (preview == null || region == null || preview.x < 2 || preview.y < 2) {
-                widened.remove(id);
-                return;
-            }
-            region.set(0, 0, preview.x, preview.y);
-            Log.i(TAG, "upload full usb frame " + preview.x + "x" + preview.y);
-        } catch (ReflectiveOperationException e) {
-            widened.remove(id);
-            Log.w(TAG, "use full usb frame failed", e);
-        }
-    }
-
-    private static void pollFullLocalFrame(Activity activity, int id, int generation, int attempt, int applied) {
+    private static void pollGrabber(Activity activity, int id, int generation, int attempt) {
         Integer current = generations.get(id);
         if (current == null || current != generation || activity.isFinishing()) {
             return;
         }
-        int nextApplied = applied;
-        if (useFullLocalFrame(activity)) {
-            nextApplied = applied + 1;
-            if (nextApplied >= REPEAT_ZOOM) {
-                return;
-            }
-        } else if (attempt >= MAX_ATTEMPTS) {
-            return;
+        boolean hooked = FaceFullFrame.install(activity);
+        if (!hooked && attempt == GRAB_ATTEMPTS) {
+            Log.w(TAG, "full-frame grabber was not installed: " + FaceFullFrame.installFailure());
         }
-        int followApplied = nextApplied;
-        int followAttempt = attempt + 1;
-        MAIN.postDelayed(
-                () -> pollFullLocalFrame(activity, id, generation, followAttempt, followApplied),
-                POLL_MS);
-    }
-
-    private static boolean useFullLocalFrame(Activity activity) {
-        try {
-            Object mask = field(activity, "faceRegionMask").get(activity);
-            Object preview = field(activity, "previewSize").get(activity);
-            if (mask == null || preview == null) {
-                return false;
-            }
-            int longer = (Integer) invoke(preview, "getLonger");
-            int shorter = (Integer) invoke(preview, "getShorter");
-            if (longer < 2 || shorter < 2) {
-                return false;
-            }
-            Region region = (Region) invoke(mask, "getFaceMaskRegion");
-            if (region == null) {
-                return false;
-            }
-            region.set(0, 0, longer, shorter);
-            Log.i(TAG, "upload full camera frame " + longer + "x" + shorter);
-            return true;
-        } catch (ReflectiveOperationException e) {
-            Log.w(TAG, "use full camera frame failed", e);
-            return false;
-        }
+        MAIN.postDelayed(() -> pollGrabber(activity, id, generation, attempt + 1), POLL_MS);
     }
 
     private static void pollZoom(Activity activity, int id, int generation, int attempt, int applied) {

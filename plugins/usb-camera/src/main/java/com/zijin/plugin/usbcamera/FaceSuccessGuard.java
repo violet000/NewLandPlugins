@@ -318,7 +318,7 @@ final class FaceSuccessGuard {
                 return null;
             }
             Object chain = args[0];
-            Object request = chain.getClass().getMethod("request").invoke(chain);
+            Object request = rewriteFaceUpload(chain.getClass().getMethod("request").invoke(chain));
             Object response;
             try {
                 response = proceed(chain, request);
@@ -335,6 +335,50 @@ final class FaceSuccessGuard {
             rememberFaceBody(request, response);
             return response;
         };
+    }
+
+    private static Object rewriteFaceUpload(Object request) {
+        try {
+            Object url = request.getClass().getMethod("url").invoke(request);
+            String urlText = String.valueOf(url);
+            if (!urlText.contains("faceLogin") && !urlText.contains("validateFace")) {
+                return request;
+            }
+            Object body = request.getClass().getMethod("body").invoke(request);
+            if (body == null) {
+                return request;
+            }
+            String text = readUtf8(body);
+            if (text == null) {
+                return request;
+            }
+            String replaced = FaceFullFrame.replaceUpload(text);
+            return rebuildRequest(request, body, replaced != null ? replaced : text);
+        } catch (Throwable t) {
+            Log.w(TAG, "replace full frame upload failed", t);
+            return request;
+        }
+    }
+
+    private static String readUtf8(Object body) throws Exception {
+        Class<?> bufferClass = Class.forName("okio.Buffer");
+        Object buffer = bufferClass.getDeclaredConstructor().newInstance();
+        Class<?> sink = Class.forName("okio.BufferedSink");
+        body.getClass().getMethod("writeTo", sink).invoke(body, buffer);
+        return (String) bufferClass.getMethod("readUtf8").invoke(buffer);
+    }
+
+    private static Object rebuildRequest(Object request, Object oldBody, String text) throws Exception {
+        Object mediaType = oldBody.getClass().getMethod("contentType").invoke(oldBody);
+        Class<?> mediaTypeClass = Class.forName("okhttp3.MediaType");
+        Class<?> requestBodyClass = Class.forName("okhttp3.RequestBody");
+        Object newBody = requestBodyClass.getMethod("create", mediaTypeClass, String.class)
+                .invoke(null, mediaType, text);
+        Object builder = request.getClass().getMethod("newBuilder").invoke(request);
+        String method = (String) request.getClass().getMethod("method").invoke(request);
+        builder.getClass().getMethod("method", String.class, requestBodyClass)
+                .invoke(builder, method, newBody);
+        return builder.getClass().getMethod("build").invoke(builder);
     }
 
     private static Object proceed(Object chain, Object request) throws Throwable {
