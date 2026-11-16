@@ -8,6 +8,8 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.CRC32;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -23,8 +25,11 @@ public class NLDevice implements NLDeviceStream {
     final private int frameSize = 512;
     private byte[] buffer = new byte[frameSize + 64];
     private CRC32 crc32 = new CRC32();
-    private boolean runable = false;
-    private boolean readFlag = true;
+    private volatile boolean runable = false;
+    private volatile boolean readFlag = true;
+    private volatile Thread recvThread;
+    private final AtomicInteger uartSession = new AtomicInteger();
+    private final Object deviceLock = new Object();
     private Context mContext;
     private int READ_TIMEOUT = 20;        // The read timeout of the reader thread
     private int WAIT_TIMEOUT = 30;      // Send command switch timeout,usually needs to be greater than READ_TIMEOUT, so that the reading thread can be suspended
@@ -63,6 +68,7 @@ public class NLDevice implements NLDeviceStream {
                 break;
             case DEV_UART:
                 curCommStream = new NLUartStream();
+                break;
             default:
                 Log.e(TAG, "USB class is error!");
                 break;
@@ -94,27 +100,41 @@ public class NLDevice implements NLDeviceStream {
 
     @Override
     public boolean nl_OpenDevice(String devPathName, int baudrate, final NLUartListener listener) {
+        synchronized (deviceLock) {
+            return openUartLocked(devPathName, baudrate, listener);
+        }
+    }
+
+    private boolean openUartLocked(String devPathName, int baudrate, final NLUartListener listener) {
         pathName = devPathName;
+        // Drop any previous reader and fd before opening the same port again.
+        closeUartLocked();
         if (curCommStream.open(pathName, baudrate)) {
+            final int session = uartSession.get();
             runable = true;
-            class RecvDataStream implements Runnable {
-                public void run() {
-                    while (runable) {
-                        if (getCommandFlag()) {
-                            int recvLen = read(recvBuffer, READ_TIMEOUT);
-                            if (recvLen > 0)
-                                listener.actionRecv(recvBuffer, recvLen);
-                        } else {
-                            try {
-                                Thread.sleep(50);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
+            Thread t = new Thread(() -> {
+                byte[] buf = new byte[recvBuffer.length];
+                while (runable && session == uartSession.get()) {
+                    try {
+                        if (!getCommandFlag()) {
+                            Thread.sleep(20);
+                            continue;
                         }
+                        int recvLen = curCommStream.readPacket(buf, 0, buf.length, READ_TIMEOUT);
+                        if (recvLen > 0 && runable && session == uartSession.get() && listener != null) {
+                            listener.actionRecv(Arrays.copyOf(buf, recvLen), recvLen);
+                        }
+                    } catch (InterruptedException e) {
+                        break;
+                    } catch (RuntimeException e) {
+                        Log.e(TAG, "uart read failed", e);
+                        if (!runable || session != uartSession.get())
+                            break;
                     }
                 }
-            }
-            Thread t = new Thread(new RecvDataStream());
+            }, "nlsdk-uart");
+            t.setDaemon(true);
+            recvThread = t;
             t.start();
             return true;
         }
@@ -124,8 +144,41 @@ public class NLDevice implements NLDeviceStream {
 
     @Override
     public void nl_CloseDevice() {
+        synchronized (deviceLock) {
+            closeUartLocked();
+        }
+    }
+
+    private void closeUartLocked() {
+        stopUartReader(false);
+        try {
+            curCommStream.close(mContext);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "close port failed", e);
+        }
+        stopUartReader(true);
+    }
+
+    /**
+     * Drop the UART reader. Closing the port first makes {@code readPacket}
+     * return; {@code join} then waits until that thread has left the loop
+     * so the next open cannot share the fd with it.
+     */
+    private void stopUartReader(boolean join) {
         runable = false;
-        curCommStream.close(mContext);
+        uartSession.incrementAndGet();
+        Thread t = recvThread;
+        if (t != null)
+            t.interrupt();
+        if (!join || t == null || t == Thread.currentThread())
+            return;
+        try {
+            t.join(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (!t.isAlive())
+            recvThread = null;
     }
 
     @Override
@@ -678,7 +731,9 @@ public class NLDevice implements NLDeviceStream {
      */
     private void clean(@SuppressWarnings("SameParameterValue") int milliseconds) {
         byte[] buffer = new byte[8 * 1024];
-        while (true) {
+        // A held trigger keeps the engine streaming. Never drain forever:
+        // close/stop would block, and the next open would run against a live reader.
+        for (int i = 0; i < 8; i++) {
             if (read(buffer, milliseconds) == 0) break;
         }
     }

@@ -21,10 +21,16 @@ import java.io.OutputStream;
  */
 
 public class NLUartStream implements NLCommStream {
+    private final Object ioLock = new Object();
     private SerialPort serialPort;
     private OutputStream outputStream;
     private InputStream inputStream;
-    private boolean isUartOpen = false;
+    private volatile boolean isUartOpen = false;
+    /**
+     * Set before the fd is closed so a reader blocked in {@link #readPacket}
+     * returns without touching the port. Close then takes {@link #ioLock}.
+     */
+    private volatile boolean abortRead = false;
 
     /**
      * @param dst     receive buffer
@@ -36,26 +42,44 @@ public class NLUartStream implements NLCommStream {
     @Override
     public int readPacket(byte[] dst, int pos, int length, int timeout) {
         int size = 0;
-        long stime, etime;
 
-        if (dst == null || length == 0)
+        if (dst == null || length <= 0 || pos < 0 || pos >= dst.length)
             return 0;
 
-        stime = SystemClock.uptimeMillis();
+        long stime = SystemClock.uptimeMillis();
         do {
-            try {
-                if (inputStream.available() > 0) {
-                    size += inputStream.read(dst, (size + pos), length - size);
-                    stime = SystemClock.uptimeMillis();
-                } else {
-                    Thread.sleep(10);
+            if (abortRead || !isUartOpen)
+                return size;
+            int avail = 0;
+            synchronized (ioLock) {
+                InputStream in = inputStream;
+                if (abortRead || !isUartOpen || in == null)
+                    return size;
+                try {
+                    avail = in.available();
+                    if (avail > 0) {
+                        int n = in.read(dst, size + pos, length - size);
+                        if (n < 0)
+                            return size;
+                        if (n > 0) {
+                            size += n;
+                            stime = SystemClock.uptimeMillis();
+                        }
+                    }
+                } catch (IOException e) {
+                    return size;
                 }
-
-            } catch (IOException | InterruptedException e) {
-                e.printStackTrace();
             }
-            etime = SystemClock.uptimeMillis();
-        } while ((size < length) && ((etime - stime) < timeout));
+            if (avail <= 0) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return size;
+                }
+            }
+        } while ((size < length) && ((SystemClock.uptimeMillis() - stime) < timeout)
+                && !abortRead && isUartOpen);
         return size;
     }
 
@@ -67,14 +91,20 @@ public class NLUartStream implements NLCommStream {
      */
     @Override
     public boolean writePacket(byte[] dst, int pos, int length) {
-        if ((dst == null) || (length <= pos))
+        if ((dst == null) || (length <= 0) || pos < 0 || pos + length > dst.length)
             return false;
-        try {
-            outputStream.write(dst, pos, length);
-        } catch (IOException e) {
-            e.printStackTrace();
+        synchronized (ioLock) {
+            OutputStream out = outputStream;
+            if (!isUartOpen || out == null)
+                return false;
+            try {
+                out.write(dst, pos, length);
+                return true;
+            } catch (IOException e) {
+                Log.w("NLUartStream", "write failed", e);
+                return false;
+            }
         }
-        return true;
     }
 
     @Override
@@ -89,17 +119,23 @@ public class NLUartStream implements NLCommStream {
      */
     @Override
     public boolean open(String pathName, int baudrate) {
-        try {
-            // Open the serial port of the /dev/ttyUSB0 path device
-            serialPort = new SerialPort(new File(pathName), baudrate, 0);
-            inputStream = serialPort.getInputStream();
-            outputStream = serialPort.getOutputStream();
-        } catch (IOException e) {
-            Log.e("NLUartStream","The device file could not be found");
-            return false;
+        synchronized (ioLock) {
+            if (isUartOpen || serialPort != null)
+                releasePortLocked();
+            try {
+                SerialPort port = new SerialPort(new File(pathName), baudrate, 0);
+                inputStream = port.getInputStream();
+                outputStream = port.getOutputStream();
+                serialPort = port;
+                abortRead = false;
+                isUartOpen = true;
+                return true;
+            } catch (IOException | RuntimeException e) {
+                Log.e("NLUartStream", "The device file could not be opened", e);
+                releasePortLocked();
+                return false;
+            }
         }
-        isUartOpen = true;
-        return true;
     }
 
     @Override
@@ -113,9 +149,43 @@ public class NLUartStream implements NLCommStream {
      */
     @Override
     public void close(Context context) {
-        if (isUartOpen) {
-            isUartOpen = false;
-            serialPort.close();
+        // Visible to the reader before we wait for ioLock, so it leaves readPacket
+        // instead of entering another read on a port we are about to close.
+        abortRead = true;
+        isUartOpen = false;
+        synchronized (ioLock) {
+            releasePortLocked();
+        }
+    }
+
+    /**
+     * Close streams before the native fd. The reader must not be inside read/write;
+     * caller holds {@link #ioLock}, and {@link #abortRead} is already set.
+     */
+    private void releasePortLocked() {
+        abortRead = true;
+        isUartOpen = false;
+        InputStream in = inputStream;
+        OutputStream out = outputStream;
+        SerialPort port = serialPort;
+        inputStream = null;
+        outputStream = null;
+        serialPort = null;
+        try {
+            if (in != null)
+                in.close();
+        } catch (IOException ignored) {
+        }
+        try {
+            if (out != null)
+                out.close();
+        } catch (IOException ignored) {
+        }
+        if (port != null) {
+            try {
+                port.close();
+            } catch (RuntimeException ignored) {
+            }
         }
     }
 

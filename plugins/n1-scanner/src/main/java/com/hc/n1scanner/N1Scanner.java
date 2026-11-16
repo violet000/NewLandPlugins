@@ -27,6 +27,8 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     private static final int MIN_BARCODE_LEN = 3;
     private static final int GOOD_READ_BEEP_MS = 80;
     private static final int GOOD_READ_BEEP_VOLUME = 100;
+    /** Gap after cutting module power so the next power-on edge actually boots it. */
+    private static final int POWER_RESET_MS = 120;
 
     public interface OnScanResultListener {
         void onScanResult(byte[] data, int length);
@@ -36,6 +38,8 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
             new NLDevice(NLDeviceStream.DevClass.DEV_UART);
     private final StringBuilder uartBuf = new StringBuilder();
     private final Object uartLock = new Object();
+    private final Object sessionLock = new Object();
+    private final Object powerLock = new Object();
     private HcPowerCtrl powerCtrl = new HcPowerCtrl();
     private OnScanResultListener listener;
     private String uartPath = DEFAULT_UART_PATH;
@@ -43,6 +47,9 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     private volatile boolean opened;
     private volatile boolean scanning;
     private volatile boolean oneShotEmitted;
+    private volatile boolean powered;
+    /** Bumped on close so a late UART callback cannot drive a session that already ended. */
+    private volatile int session;
     private ToneGenerator tone;
 
     public void setListener(OnScanResultListener listener) {
@@ -54,23 +61,39 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     }
 
     public boolean open(String uartPath, int baudrate) {
+        synchronized (sessionLock) {
+            return openLocked(uartPath, baudrate);
+        }
+    }
+
+    private boolean openLocked(String uartPath, int baudrate) {
         this.uartPath = uartPath != null ? uartPath : DEFAULT_UART_PATH;
         this.baudrate = baudrate > 0 ? baudrate : DEFAULT_BAUDRATE;
 
+        if (opened || device.nl_DeviceIsOpen()) {
+            releaseDeviceLocked();
+        }
         if (powerCtrl == null) {
             powerCtrl = new HcPowerCtrl();
         }
         powerOn();
         SystemClock.sleep(100);
 
-        boolean ok = device.nl_OpenDevice(this.uartPath, this.baudrate, this);
+        boolean ok = false;
+        try {
+            ok = device.nl_OpenDevice(this.uartPath, this.baudrate, this);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "open device error", e);
+        }
         if (ok) {
-            device.nl_SendCommand(CMD_SERIAL_TRIGGER);
             opened = true;
+            device.nl_SendCommand(CMD_SERIAL_TRIGGER);
             Log.i(TAG, "open success path=" + this.uartPath + " baud=" + this.baudrate);
         } else {
             opened = false;
             Log.e(TAG, "open failed path=" + this.uartPath);
+            releaseDeviceLocked();
+            powerOff();
         }
         return ok;
     }
@@ -84,64 +107,109 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     }
 
     public boolean startContinuousScan(String uartPath, int baudrate) {
-        oneShotEmitted = false;
-        clearUartBuf();
-        if (!opened && !open(uartPath, baudrate)) {
-            Log.e(TAG, "startContinuousScan failed: open");
-            return false;
+        synchronized (sessionLock) {
+            if (scanning && isOpen()) {
+                holdTrigger(true);
+                return true;
+            }
+            oneShotEmitted = false;
+            clearUartBuf();
+            if (!isOpen()) {
+                opened = false;
+                if (!openLocked(uartPath, baudrate)) {
+                    Log.e(TAG, "startContinuousScan failed: open");
+                    return false;
+                }
+            }
+            sendCommand(CMD_CR_SUFFIX);
+            sendCommand(CMD_REREAD_TIMEOUT);
+            boolean mode = sendCommand(CMD_CONTINUOUS_MODE);
+            // Light the IR head before the slower trigger commands. A later
+            // failure must not leave the previous session's trigger stuck off.
+            holdTrigger(true);
+            boolean serialTrig = sendCommand(CMD_START_TRIGGER);
+            boolean pulse = startScanLocked();
+            scanning = true;
+            Log.i(TAG, "startContinuousScan mode=" + mode
+                    + " serialTrig=" + serialTrig + " pulse=" + pulse);
+            return mode || serialTrig || pulse || isOpen();
         }
-        sendCommand(CMD_CR_SUFFIX);
-        sendCommand(CMD_REREAD_TIMEOUT);
-        boolean mode = sendCommand(CMD_CONTINUOUS_MODE);
-        holdTrigger(true);
-        boolean serialTrig = sendCommand(CMD_START_TRIGGER);
-        boolean pulse = startScan();
-        scanning = true;
-        Log.i(TAG, "startContinuousScan mode=" + mode
-                + " serialTrig=" + serialTrig + " pulse=" + pulse);
-        return mode || serialTrig || pulse || isOpen();
     }
 
     public boolean startScan() {
+        synchronized (sessionLock) {
+            return startScanLocked();
+        }
+    }
+
+    private boolean startScanLocked() {
         if (!opened) {
             Log.w(TAG, "startScan ignored: device not open");
             return false;
         }
         try {
             return device.nl_StartScan();
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             Log.e(TAG, "startScan error", e);
             return false;
         }
     }
 
     public boolean stopScan() {
+        synchronized (sessionLock) {
+            return stopScanLocked();
+        }
+    }
+
+    private boolean stopScanLocked() {
         scanning = false;
         oneShotEmitted = true;
         clearUartBuf();
+        holdTrigger(false);
         if (!opened) {
             return false;
         }
-        boolean stopped = device.nl_StopScan();
-        holdTrigger(false);
-        return stopped;
+        try {
+            return device.nl_StopScan();
+        } catch (RuntimeException e) {
+            Log.e(TAG, "stopScan error", e);
+            return false;
+        }
     }
 
     public void close() {
-        try {
-            if (opened) {
-                stopScan();
-                device.nl_CloseDevice();
-            }
-        } finally {
-            holdTrigger(false);
-            if (powerCtrl != null) {
-                powerCtrl.scanPower(0);
-            }
-            opened = false;
+        synchronized (sessionLock) {
+            session++;
             scanning = false;
-            releaseTone();
+            oneShotEmitted = true;
+            clearUartBuf();
+            try {
+                // Release the hardware trigger before tearing down the UART.
+                // While a scan has produced no barcode the trigger stays held
+                // and the reader thread is busy; closing the fd under it crashes.
+                holdTrigger(false);
+                if (opened || device.nl_DeviceIsOpen()) {
+                    // Do not send #SCNTRG0 here. With the trigger still streaming,
+                    // that command drains the UART until it goes quiet and never
+                    // returns. Cutting the port and the power stops the engine.
+                    releaseDeviceLocked();
+                }
+            } finally {
+                opened = false;
+                scanning = false;
+                powerOff();
+                releaseTone();
+            }
         }
+    }
+
+    private void releaseDeviceLocked() {
+        try {
+            device.nl_CloseDevice();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "close device failed", e);
+        }
+        opened = false;
     }
 
     public boolean isOpen() {
@@ -153,10 +221,17 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     }
 
     public boolean sendCommand(String command) {
-        if (!opened) {
-            return false;
+        synchronized (sessionLock) {
+            if (!opened || command == null) {
+                return false;
+            }
+            try {
+                return device.nl_SendCommand(command);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "sendCommand error", e);
+                return false;
+            }
         }
-        return device.nl_SendCommand(command);
     }
 
     public NLDeviceStream getDevice() {
@@ -165,27 +240,32 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
 
     @Override
     public void actionRecv(byte[] recvBuff, int len) {
-        if (!scanning || oneShotEmitted || listener == null || recvBuff == null || len <= 0) {
+        int token = session;
+        OnScanResultListener current = listener;
+        if (!scanning || oneShotEmitted || current == null || recvBuff == null || len <= 0) {
             return;
         }
         String chunk = new String(recvBuff, 0, len);
         String barcode;
         synchronized (uartLock) {
+            if (token != session) {
+                return;
+            }
             uartBuf.append(chunk);
             barcode = takeNextBarcode();
         }
-        if (barcode == null) {
-            return;
-        }
-        if (oneShotEmitted) {
+        if (barcode == null || oneShotEmitted || token != session) {
             return;
         }
         oneShotEmitted = true;
         scanning = false;
         holdTrigger(false);
         playGoodReadBeep();
+        if (token != session) {
+            return;
+        }
         byte[] out = barcode.getBytes();
-        listener.onScanResult(out, out.length);
+        current.onScanResult(out, out.length);
     }
 
     private synchronized void playGoodReadBeep() {
@@ -341,15 +421,53 @@ public class N1Scanner implements NLDeviceStream.NLUartListener {
     }
 
     private void powerOn() {
-        powerCtrl.scanTrig(1);
-        powerCtrl.scanPower(1);
-        powerCtrl.scanWakeup(1);
-        powerCtrl.scanPwrdwn(1);
-        powerCtrl.scanTrig(0);
+        synchronized (powerLock) {
+            if (powerCtrl == null) {
+                return;
+            }
+            // Lines may still be high after a scan that never decoded.
+            // Drop them so wakeup / power-down see a real edge on the next open.
+            powerCtrl.scanTrig(0);
+            powerCtrl.scanPower(0);
+            powerCtrl.scanWakeup(0);
+            powerCtrl.scanPwrdwn(0);
+            powered = false;
+            SystemClock.sleep(POWER_RESET_MS);
+            powerCtrl.scanTrig(1);
+            powerCtrl.scanPower(1);
+            powerCtrl.scanWakeup(1);
+            powerCtrl.scanPwrdwn(1);
+            powerCtrl.scanTrig(0);
+            powered = true;
+        }
+    }
+
+    private void powerOff() {
+        synchronized (powerLock) {
+            if (powerCtrl == null) {
+                powered = false;
+                return;
+            }
+            try {
+                powerCtrl.scanTrig(0);
+                powerCtrl.scanPower(0);
+                powerCtrl.scanWakeup(0);
+                powerCtrl.scanPwrdwn(0);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "power off failed", e);
+            }
+            powered = false;
+        }
     }
 
     private void holdTrigger(boolean hold) {
-        if (powerCtrl != null) {
+        synchronized (powerLock) {
+            if (powerCtrl == null) {
+                return;
+            }
+            if (hold && !powered) {
+                return;
+            }
             powerCtrl.scanTrig(hold ? 1 : 0);
         }
     }
